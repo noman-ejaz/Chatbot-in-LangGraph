@@ -5,6 +5,9 @@ __pycache__/
 *.pyd
 *.sqlite3
 *.log
+*.db
+*chatbot.db
+.chatbot.db
 .env
 .env.*
 venv/
