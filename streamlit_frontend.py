@@ -1,6 +1,6 @@
 import streamlit as st
 from langgraph_backend import chatbot, retrieve_all_threads
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 import uuid
 
 # **************************************** utility functions *************************
@@ -94,18 +94,49 @@ if user_input:
         "run_name": "chat_turn",
     }
 
-     # first add the message to message_history
+    # assistant response
     with st.chat_message("assistant"):
+        # Reserve slots: status box stays ABOVE the streamed answer
+        status_placeholder = st.empty()
+        text_placeholder = st.empty()
+        status_holder = {"box": None}
+
         def ai_only_stream():
             for message_chunk, metadata in chatbot.stream(
                 {"messages": [HumanMessage(content=user_input)]},
                 config=CONFIG,
-                stream_mode="messages"
+                stream_mode="messages",
             ):
+                # 1) Model decided to call a tool -> show it live, before it runs
+                if isinstance(message_chunk, AIMessage) and message_chunk.tool_calls:
+                    names = ", ".join(tc["name"] for tc in message_chunk.tool_calls)
+                    box = status_placeholder.status(
+                        f"🔧 Calling `{names}` …", expanded=True
+                    )
+                    for tc in message_chunk.tool_calls:
+                        box.write(f"`{tc['name']}` args: `{tc['args']}`")
+                    status_holder["box"] = box
+
+                # 2) Tool finished -> mark the status complete
+                if isinstance(message_chunk, ToolMessage):
+                    tool_name = getattr(message_chunk, "name", "tool")
+                    if status_holder["box"] is None:
+                        status_holder["box"] = status_placeholder.status(
+                            f"🔧 Used `{tool_name}`", expanded=True
+                        )
+                    status_holder["box"].update(
+                        label=f"✅ `{tool_name}` finished",
+                        state="complete",
+                        expanded=False,
+                    )
+
+                # 3) Stream ONLY assistant text tokens
                 if isinstance(message_chunk, AIMessage):
-                    # yield only assistant tokens
                     yield message_chunk.text
 
-        ai_message = st.write_stream(ai_only_stream())
+        ai_message = text_placeholder.write_stream(ai_only_stream())
 
-    st.session_state['message_history'].append({'role': 'assistant', 'content': ai_message})
+    # Save assistant message
+    st.session_state["message_history"].append(
+        {"role": "assistant", "content": ai_message}
+    )
